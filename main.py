@@ -1,20 +1,22 @@
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey
+from solders.transaction_status import EncodedConfirmedTransactionWithStatusMeta
 from telegram import Bot
 import time
-import os
-import requests
+import json
+import base64
+import asyncio
 
-TELEGRAM_TOKEN = "" # Your Bot token
-TELEGRAM_CHAT_ID = "" # Your chatId, obtain from telegram
-QUICKNODE_RPC_URL = "" # RPC Provider URL
-TARGET_WALLET = "" # Smart wallet
-THRESHOLD_AMOUNT = 10
+TELEGRAM_TOKEN = ""
+TELEGRAM_CHAT_ID = ""
+QUICKNODE_RPC_URL = ""
+TARGET_WALLET = ""
+THRESHOLD_AMOUNT = 1
 
 bot = Bot(token=TELEGRAM_TOKEN)
 solana_client = Client(QUICKNODE_RPC_URL)
 
-def check_solana_transactions():
+async def check_solana_transactions():
     try:
         wallet_pubkey = Pubkey.from_string(TARGET_WALLET)
         response = solana_client.get_signatures_for_address(wallet_pubkey, limit=10)
@@ -41,31 +43,39 @@ def check_solana_transactions():
                     f"Trade Detail: https://explorer.solana.com/tx/{tx_signature}"
                 )
 
-                bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
     except Exception as e:
         print(f"check_solana_transactions error: {e}")
 
 def extract_transaction_value(transaction):
     value = 0
     try:
-        instructions = transaction.transaction.message.instructions
-        for instr in instructions:
-            if instr.program_id.to_string() == "11111111111111111111111111111111":
-                if hasattr(instr, "parsed") and hasattr(instr.parsed, "info"):
-                    info = instr.parsed.info
-                    if "lamports" in info:
-                        lamports = int(info["lamports"])
-                        value = max(value, lamports / 1e9)
+        if isinstance(transaction, EncodedConfirmedTransactionWithStatusMeta):
+            tx_data = transaction.transaction
+
+            tx_json_str = tx_data.to_json()
+            tx_json = json.loads(tx_json_str)
+
+            instructions = tx_json["transaction"]["message"]["instructions"]
+
+            for instr in instructions:
+                if instr["programIdIndex"] == 1:
+                    lamports = decode_lamports(instr["data"])
+                    value = max(value, lamports / 1e9)
     except Exception as e:
         print(f"extract_transaction_value error: {e}")
     return value;
 
-def main():
+def decode_lamports(data):
+    decode_bytes = base64.b64decode(data)
+    return int.from_bytes(decode_bytes, "big")
+
+async def main():
     print("Launch LedgerEyeBot...")
 
     while True:
-        check_solana_transactions()
-        time.sleep(30)
+        await check_solana_transactions()
+        await asyncio.sleep(30)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
