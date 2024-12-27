@@ -1,6 +1,5 @@
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey
-from solders.transaction_status import EncodedConfirmedTransactionWithStatusMeta
 from telegram import Bot
 import json
 import base64
@@ -11,8 +10,9 @@ import struct
 TELEGRAM_TOKEN = ""
 TELEGRAM_CHAT_ID = ""
 QUICKNODE_RPC_URL = ""
-# second wallet: 8LYBwhJqiDf64EHPWASJdgnXy51HKuXawoavAJ3HGQb9
-TARGET_WALLET = "64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm"
+# SPL token: Dc78ytMezDnQDUSAA9N6wE1fsUZ9LQaf8brVw5Eom2Vu
+# second wallet: 64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm
+TARGET_WALLET = "8LYBwhJqiDf64EHPWASJdgnXy51HKuXawoavAJ3HGQb9"
 THRESHOLD_AMOUNT = 1
 
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -51,15 +51,16 @@ async def check_solana_transactions():
                 continue
 
             parsed_tx = tx_details.value
-            value = extract_transaction_value(parsed_tx)
-            print(f"Transaction amount: {value} SOL")
-            if value >= THRESHOLD_AMOUNT:
+            token_data = extract_token_purchase(parsed_tx)
+            print(f"Token purchase: {token_data}")
+            if token_data and token_data["sol_spent"] >= THRESHOLD_AMOUNT:
                 message = (
                     f"🚨 LedgerEyeBot Alert！\n"
-                    f"Wallet Address: {TARGET_WALLET}\n"
-                    f"Trade Amount: {value:.4f} SOL\n"
-                    f"Trade Hash: {tx_signature}\n"
-                    f"Trade Detail: https://explorer.solana.com/tx/{tx_signature}"
+                    f"钱包：{TARGET_WALLET}\n"
+                    f"花费：{token_data['sol_spent']:.2f} SOL\n"
+                    f"购买：{token_data['token_received']} {token_data['token_name']}\n"
+                    f"合约地址：{token_data['token_contract']}\n"
+                    f"交易详情：https://explorer.solana.com/tx/{tx_signature}"
                 )
 
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
@@ -68,6 +69,74 @@ async def check_solana_transactions():
     except Exception as e:
         print(f"check_solana_transactions error: {e}")
 
+def extract_token_purchase(transaction):
+    try:
+        tx_json = json.loads(transaction.transaction.to_json)
+        meta = tx_json["meta"]
+        message = tx_json["transaction"]["message"]
+        accounts = message["accountKeys"]
+
+        # Initial result
+        sol_spent = 0
+        token_received = 0
+        token_name = "Unknown Token"
+        token_contract = None
+
+        for instruction in message["instructions"]:
+            program_id_index = instruction["programIdIndex"]
+            program_id = accounts[program_id_index]
+
+            # 检查是否是SPL 币种
+            if program_id not in ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"]:
+                continue
+
+            accounts_involved = instruction["accounts"]
+            if len(accounts_involved) < 2:
+                continue
+
+            from_index = accounts_involved[0]
+            to_index = accounts_involved[1]
+            from_account = accounts[from_index]
+            to_account = accounts[to_index]
+            print(f"From account: {from_account}")
+            print(f"To account: {to_account}")
+
+            if to_account == TARGET_WALLET:
+                token_contract = from_account
+                transfer_data = instruction["data"]
+                token_received = decode_transfer_amount(transfer_data)
+
+                pre_balance = meta["preBalances"][to_index]
+                post_balance = meta["postBalances"][to_index]
+                sol_spent = (pre_balance - post_balance) - meta["fee"]
+
+        return {
+            "sol_spent": sol_spent / 1_000_000_000,
+            "token_received": token_received,
+            "token_name": token_name,
+            "token_contract": token_contract or "Unknown Contract",
+        }
+    except Exception as e:
+        print(f"extract_token_purchase error: {e}")
+        return None
+
+def decode_transfer_amount(transfer_data):
+    try:
+        decoded = base64.b64decode(transfer_data + "=" * (-len(transfer_data) % 4))
+        print(f"Decoded bytes: {decoded}")
+
+        if len(decoded) >= 9 and decoded[0] == 3:
+            amount = struct.unpack("<Q", decoded[1:9])[0]
+            print(f"Decoded transfer amount: {amount}")
+            return amount
+
+        print(f"Invalid transfer instruction format: {decoded}")
+        return 0
+    except Exception as e:
+        print(f"decode_transfer_amount error: {e}")
+        return 0
+
+
 def extract_transaction_value(transaction):
     print(f"Transaction: {transaction}")
     try:
@@ -75,7 +144,7 @@ def extract_transaction_value(transaction):
         meta = tx_json["meta"]
         message = tx_json["transaction"]["message"]
         accounts = message["accountKeys"]
-        # 打印账户和余额信息
+        # print log for debug
         print(f"Accounts: {accounts}")
         print(f"Pre balances: {meta['preBalances']}")
         print(f"Post balances: {meta['postBalances']}")
@@ -102,46 +171,8 @@ def extract_transaction_value(transaction):
                         return sol_amount
 
         return 0
-
-
-        # tx_json = json.loads(transaction.transaction.to_json())
-        # message = tx_json["transaction"]["message"]
-        #
-        # accounts = message["accountKeys"]
-        # instructions = message["instructions"]
-        #
-        # for instruction in instructions:
-        #     if instruction["programIdIndex"] == 2:
-        #         from_index = instruction["accounts"][0]
-        #         to_index = instruction["accounts"][1]
-        #         from_account = accounts[from_index]
-        #         to_account = accounts[to_index]
-        #
-        #         print(f"From account: {from_account}")
-        #         print(f"To account: {to_account}")
-        #
-        #         if from_account == TARGET_WALLET:
-        #             transfer_data = instruction["data"]
-        #             lamports = decode_transfer_amount(transfer_data)
-        #             print(f"Lamports: {lamports}")
-        #             return lamports / 1000000000
-        #
-        # return 0
     except Exception as e:
         print(f"extract_transaction_value error: {e}")
-        return 0
-
-def decode_transfer_amount(transfer_data):
-    try:
-        decoded = base64.b64decode(transfer_data + "=" * (-len(transfer_data) % 4))
-        if len(decoded) >= 9 and decoded[0] == 2:
-            amount = struct.unpack("<Q", decoded[1:9])[0]
-            return amount
-
-        print(f"Invalid instruction type: {decoded[0] if decoded else 'no data'}")
-        return 0
-    except Exception as e:
-        print(f"decode_transfer_amount error: {e}")
         return 0
 
 async def main():
