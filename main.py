@@ -12,7 +12,7 @@ TELEGRAM_CHAT_ID = ""
 SOLANA_RPC_URL = ""
 # SPL token: Dc78ytMezDnQDUSAA9N6wE1fsUZ9LQaf8brVw5Eom2Vu
 # second wallet:
-TARGET_WALLET = "HfmBFDPvM2MZoSCjD2QvEdeJQLr64mKWPKkJSop8youD"
+TARGET_WALLET = "8LYBwhJqiDf64EHPWASJdgnXy51HKuXawoavAJ3HGQb9"
 THRESHOLD_AMOUNT = 0.01
 
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -74,12 +74,18 @@ def extract_token_purchase(transaction):
     try:
         tx_json = json.loads(transaction.transaction.to_json())
         meta = tx_json["meta"]
+        if not meta:
+            print("No meta data.")
+            return None
+
         message = tx_json["transaction"]["message"]
+        pre_balances = meta.get("pre_balances")
+        post_balance = meta.get("post_balances")
+        if not pre_balances or not post_balance:
+            print("Balance information missing in meta")
+            return None
 
-        pre_balances = meta["pre_balances"]
-        post_balance = meta["post_balances"]
         sol_spent = (pre_balances[0] - post_balance[0]) / 1_000_000_000
-
         instructions = message["instructions"]
         for instruction in instructions:
             program_id_index = instruction["programIdIndex"]
