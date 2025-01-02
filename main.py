@@ -11,7 +11,7 @@ TELEGRAM_TOKEN = ""
 TELEGRAM_CHAT_ID = ""
 SOLANA_RPC_URL = ""
 # SPL token: Dc78ytMezDnQDUSAA9N6wE1fsUZ9LQaf8brVw5Eom2Vu
-# second wallet:
+# second wallet: 64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm
 TARGET_WALLET = "8LYBwhJqiDf64EHPWASJdgnXy51HKuXawoavAJ3HGQb9"
 THRESHOLD_AMOUNT = 0.01
 
@@ -19,7 +19,7 @@ bot = Bot(token=TELEGRAM_TOKEN)
 solana_client = Client(SOLANA_RPC_URL)
 
 # Only focus on transaction records after the program is started
-# start_time = int(time.time())
+start_time = int(time.time())
 # Had deal with the processed signatures to prevent duplicate alarms
 processed_transactions = set()
 
@@ -78,14 +78,14 @@ def extract_token_purchase(transaction):
             print("No meta data.")
             return None
 
-        message = tx_json["transaction"]["message"]
-        pre_balances = meta.get("pre_balances")
-        post_balance = meta.get("post_balances")
+        pre_balances = meta.get("preBalances")
+        post_balance = meta.get("postBalances")
         if not pre_balances or not post_balance:
             print("Balance information missing in meta")
             return None
 
         sol_spent = (pre_balances[0] - post_balance[0]) / 1_000_000_000
+        message = tx_json["transaction"]["message"]
         instructions = message["instructions"]
         for instruction in instructions:
             program_id_index = instruction["programIdIndex"]
@@ -99,6 +99,8 @@ def extract_token_purchase(transaction):
 
                 token_name = get_token_name(token_contract)
                 return token_name, token_contract, sol_spent
+        print("No SPL Token purchase found in transaction.")
+        return None
     except Exception as e:
         print(f"extract_token_purchase error: {e}")
         return None
@@ -136,61 +138,6 @@ def get_metadata_account(token_contract):
     except Exception as e:
         print(f"get_metadata_account error: {e}")
         return None
-
-def decode_transfer_amount(transfer_data):
-    try:
-        decoded = base64.b64decode(transfer_data + "=" * (-len(transfer_data) % 4))
-        print(f"Decoded bytes: {decoded}")
-
-        if len(decoded) >= 9 and decoded[0] == 3:
-            amount = struct.unpack("<Q", decoded[1:9])[0]
-            print(f"Decoded transfer amount: {amount}")
-            return amount
-
-        print(f"Invalid transfer instruction format: {decoded}")
-        return 0
-    except Exception as e:
-        print(f"decode_transfer_amount error: {e}")
-        return 0
-
-
-def extract_transaction_value(transaction):
-    print(f"Transaction: {transaction}")
-    try:
-        tx_json = json.loads(transaction.transaction.to_json())
-        meta = tx_json["meta"]
-        message = tx_json["transaction"]["message"]
-        accounts = message["accountKeys"]
-        # print log for debug
-        print(f"Accounts: {accounts}")
-        print(f"Pre balances: {meta['preBalances']}")
-        print(f"Post balances: {meta['postBalances']}")
-
-        for instruction in message["instructions"]:
-            if instruction["programIdIndex"] == 2:
-                from_index = instruction["accounts"][0]
-                to_index = instruction["accounts"][1]
-
-                from_account = accounts[from_index]
-                to_account = accounts[to_index]
-
-                print(f"From account: {from_account}")
-                print(f"To account: {to_account}")
-
-                if from_account == TARGET_WALLET:
-                    pre_balance = meta["preBalances"][from_index]
-                    post_balance = meta["postBalances"][from_index]
-
-                    lamports = pre_balance - post_balance - meta["fee"]
-                    if lamports > 0:
-                        sol_amount = lamports / 1_000_000_000
-                        print(f"Extracted amount based on balance change: {sol_amount} SOL")
-                        return sol_amount
-
-        return 0
-    except Exception as e:
-        print(f"extract_transaction_value error: {e}")
-        return 0
 
 async def main():
     print("Launch LedgerEyeBot...")
