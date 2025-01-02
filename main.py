@@ -5,70 +5,109 @@ import json
 import base64
 import asyncio
 import time
-import struct
+from collections import defaultdict
+from solana.rpc.types import TxOpts
 
 TELEGRAM_TOKEN = ""
 TELEGRAM_CHAT_ID = ""
 SOLANA_RPC_URL = ""
-# SPL token: Dc78ytMezDnQDUSAA9N6wE1fsUZ9LQaf8brVw5Eom2Vu
-# second wallet: 64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm
-TARGET_WALLET = "8LYBwhJqiDf64EHPWASJdgnXy51HKuXawoavAJ3HGQb9"
-THRESHOLD_AMOUNT = 0.01
 
 bot = Bot(token=TELEGRAM_TOKEN)
 solana_client = Client(SOLANA_RPC_URL)
 
-# Only focus on transaction records after the program is started
+# SPL token: Dc78ytMezDnQDUSAA9N6wE1fsUZ9LQaf8brVw5Eom2Vu
+# second wallet: 64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm
+TARGET_WALLET = ["8LYBwhJqiDf64EHPWASJdgnXy51HKuXawoavAJ3HGQb9", "64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm"]
+THRESHOLD_AMOUNT = 2
+# seconds
+FOMO_INTERVAL = 15 * 60
 start_time = int(time.time())
-# Had deal with the processed signatures to prevent duplicate alarms
-processed_transactions = set()
 
-async def check_solana_transactions():
+fomo_cache = defaultdict(lambda: {
+    "token_contract": "",
+    "total_sol_spent": 0.0,
+    "transactions": []
+})
+
+async def check_solana_transactions(wallet):
     try:
-        wallet_pubkey = Pubkey.from_string(TARGET_WALLET)
-        response = solana_client.get_signatures_for_address(wallet_pubkey, limit=5)
-        transactions = response.value
+        # Had deal with the processed signatures to prevent duplicate alarms
+        processed_transactions = set()
 
-        if not transactions:
-            print("No transactions found.")
-            return
+        wallet_pubkey = Pubkey.from_string(wallet)
+        while True:
+            response = solana_client.get_signatures_for_address(wallet_pubkey, limit=5)
+            transactions = response.value
+            if not transactions:
+                print("No transactions found.")
+                return
 
-        for tx in transactions:
-            tx_signature = tx.signature
-            tx_timestamp = tx.block_time
+            for tx in transactions:
+                tx_signature = tx["signature"]
+                if tx_signature in processed_transactions:
+                    continue
 
-            # if tx_timestamp and tx_timestamp < start_time:
-            #     continue
+                tx_details = solana_client.get_transaction(tx_signature)
+                if not tx_details or not tx_details.value:
+                    continue
 
-            if tx_signature in processed_transactions:
-                print(f"Transaction {tx_signature} already processed, skipping")
-                continue
+                parsed_tx = tx_details.value
+                result = extract_token_purchase(parsed_tx)
+                print(f"Token purchase: {result}")
 
-            tx_details = solana_client.get_transaction(tx_signature)
-            print(f"tx_details details: {tx_details}")
-            if not tx_details or not tx_details.value:
-                continue
+                if result:
+                    token_name, token_contract, sol_spent = result
+                    if sol_spent >= THRESHOLD_AMOUNT:
+                        if token_name in fomo_cache:
+                            fomo_cache[token_name]["total_sol_spent"] += sol_spent
+                            fomo_cache[token_name]["transactions"].append({
+                                "wallet": wallet,
+                                "sol_spent": sol_spent,
+                                "quantity": 0
+                            })
+                        else:
+                            fomo_cache[token_name] = {
+                                "token_contract": token_contract,
+                                "total_sol_spent": sol_spent,
+                                "transactions":[{
+                                    "wallet": wallet,
+                                    "sol_spent": sol_spent,
+                                    "quantity": 0
+                                }]
+                            }
 
-            parsed_tx = tx_details.value
-            result = extract_token_purchase(parsed_tx)
-            print(f"Token purchase: {result}")
-            if result:
-                token_name, token_contract, sol_spent = result
-                if sol_spent >= THRESHOLD_AMOUNT:
-                    message = (
-                        f"🚨 LedgerEyeBot Alert!\n"
-                        f"Wallet: {TARGET_WALLET}\n"
-                        f"Spent: {sol_spent:.2f} SOL\n"
-                        f"Purchased: {token_name}\n"
-                        f"Token Contract: {token_contract}\n"
-                        f"Transaction Hash: {tx_signature}\n"
-                    )
-
-                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-                # Add to processed set
                 processed_transactions.add(tx_signature)
+            await asyncio.sleep(10)
     except Exception as e:
-        print(f"check_solana_transactions error: {e}")
+        print(f"check_solana_transactions error for wallet {wallet}: {e}")
+
+async def monitor_fomo():
+    while True:
+        try:
+            if fomo_cache:
+                await  process_fomo_signals()
+            await asyncio.sleep(FOMO_INTERVAL)
+        except Exception as e:
+            print(f"monitor_fomo error: {e}")
+
+async def process_fomo_signals():
+    try:
+        for token_name, data in fomo_cache.items():
+            token_contract = data["token_contract"]
+            total_sol_spent = data["total_sol_spent"]
+            transactions = data["transactions"]
+
+            message = f"[FOMO Single] ${token_name} ({len(transactions)} 个聪明钱包购买)\n\n"
+            message += f"合约地址: {token_contract}\n\n"
+
+            for tx in transactions:
+                message += f"🟢钱包{tx['wallet']} 花费 {tx['sol_spent']} SOL 买入 {tx['quantity']:.2f} {token_name}\n"
+
+            message += f"\n 总共花费: {total_sol_spent:.2f} SOL\n"
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        fomo_cache.clear()
+    except Exception as e:
+        print(f"process_fomo_signals error: {e}")
 
 def extract_token_purchase(transaction):
     try:
@@ -142,9 +181,7 @@ def get_metadata_account(token_contract):
 async def main():
     print("Launch LedgerEyeBot...")
 
-    while True:
-        await check_solana_transactions()
-        await asyncio.sleep(30)
+    await asyncio.gather(*[check_solana_transactions(wallet) for wallet in TARGET_WALLET], monitor_fomo())
 
 if __name__ == "__main__":
     asyncio.run(main())
