@@ -97,13 +97,13 @@ async def process_fomo_signals():
             total_sol_spent = data["total_sol_spent"]
             transactions = data["transactions"]
 
-            message = f"[FOMO Single] ${token_name} ({len(transactions)} 个聪明钱包购买)\n\n"
-            message += f"合约地址: {token_contract}\n\n"
+            message = f"[FOMO Single] ${token_name} ({len(transactions)} Smart Wallet Purchase)\n\n"
+            message += f"Contract Address: {token_contract}\n\n"
 
             for tx in transactions:
-                message += f"🟢钱包{tx['wallet']} 花费 {tx['sol_spent']} SOL 买入 {tx['quantity']:.2f} {token_name}\n"
+                message += f"🟢Wallet{tx['wallet']} Spent {tx['sol_spent']} SOL Purchase {tx['quantity']:.2f} {token_name}\n"
 
-            message += f"\n 总共花费: {total_sol_spent:.2f} SOL\n"
+            message += f"\n Total Spent: {total_sol_spent:.2f} SOL\n"
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         fomo_cache.clear()
     except Exception as e:
