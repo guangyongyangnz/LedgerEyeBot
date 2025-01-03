@@ -1,23 +1,26 @@
+import os
+
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey
-from solders.signature import Signature
 from telegram import Bot
 import json
 import base64
 import asyncio
 import time
 from collections import defaultdict
-from solana.rpc.types import TxOpts
 
-TELEGRAM_TOKEN = ""
-TELEGRAM_CHAT_ID = ""
-# SOLANA_RPC_URL = ""
-SOLANA_RPC_URL = ""
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+SOLANA_RPC_URL = os.environ.get("SOLANA_RPC_URL")
+
+print(f"Telegram Token: {TELEGRAM_TOKEN}")
+print(f"Telegram Chat ID: {TELEGRAM_CHAT_ID}")
+print(f"Solana RPC URL: {SOLANA_RPC_URL}")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 solana_client = Client(SOLANA_RPC_URL)
 
-TARGET_WALLET = ["64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm"]
+TARGET_WALLET = ["71wLuqoDDepH5gRiMQgghLE2zUttcxZCPgtcJFGXp7ja"]
 THRESHOLD_AMOUNT = 0.01
 # seconds
 FOMO_INTERVAL = 15 * 60
@@ -48,21 +51,11 @@ async def check_solana_transactions(wallet):
                 if tx_signature in processed_transactions:
                     continue
 
-                print("1")
-                try:
-                    tx_details = solana_client.get_transaction(tx_signature,
-                                                               max_supported_transaction_version=0)
-                    print("1.5")
-                except Exception as get_tx_error:
-                    print(f"Error fetching transaction: {get_tx_error}")
-                    continue
-
-                print("2")
+                tx_details = solana_client.get_transaction(tx_signature,
+                                                           max_supported_transaction_version=0)
                 if not tx_details or not tx_details.value:
-                    print("3")
                     continue
 
-                print("4")
                 parsed_tx = tx_details.value
                 result = extract_token_purchase(parsed_tx)
                 print(f"Token purchase: {result}")
