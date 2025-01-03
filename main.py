@@ -1,5 +1,6 @@
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey
+from solders.signature import Signature
 from telegram import Bot
 import json
 import base64
@@ -10,15 +11,14 @@ from solana.rpc.types import TxOpts
 
 TELEGRAM_TOKEN = ""
 TELEGRAM_CHAT_ID = ""
+# SOLANA_RPC_URL = ""
 SOLANA_RPC_URL = ""
 
 bot = Bot(token=TELEGRAM_TOKEN)
 solana_client = Client(SOLANA_RPC_URL)
 
-# SPL token: Dc78ytMezDnQDUSAA9N6wE1fsUZ9LQaf8brVw5Eom2Vu
-# second wallet: 64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm
-TARGET_WALLET = ["8LYBwhJqiDf64EHPWASJdgnXy51HKuXawoavAJ3HGQb9", "64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm"]
-THRESHOLD_AMOUNT = 2
+TARGET_WALLET = ["64ebCdMzJ1K33ATzVwaPNuNgPfXrAy7gocutsY8jMCVm"]
+THRESHOLD_AMOUNT = 0.01
 # seconds
 FOMO_INTERVAL = 15 * 60
 start_time = int(time.time())
@@ -28,6 +28,7 @@ fomo_cache = defaultdict(lambda: {
     "total_sol_spent": 0.0,
     "transactions": []
 })
+
 
 async def check_solana_transactions(wallet):
     try:
@@ -39,18 +40,29 @@ async def check_solana_transactions(wallet):
             response = solana_client.get_signatures_for_address(wallet_pubkey, limit=5)
             transactions = response.value
             if not transactions:
-                print("No transactions found.")
+                print(f"No transactions found. wallet: {wallet}")
                 return
 
             for tx in transactions:
-                tx_signature = tx["signature"]
+                tx_signature = tx.signature
                 if tx_signature in processed_transactions:
                     continue
 
-                tx_details = solana_client.get_transaction(tx_signature)
-                if not tx_details or not tx_details.value:
+                print("1")
+                try:
+                    tx_details = solana_client.get_transaction(tx_signature,
+                                                               max_supported_transaction_version=0)
+                    print("1.5")
+                except Exception as get_tx_error:
+                    print(f"Error fetching transaction: {get_tx_error}")
                     continue
 
+                print("2")
+                if not tx_details or not tx_details.value:
+                    print("3")
+                    continue
+
+                print("4")
                 parsed_tx = tx_details.value
                 result = extract_token_purchase(parsed_tx)
                 print(f"Token purchase: {result}")
@@ -69,7 +81,7 @@ async def check_solana_transactions(wallet):
                             fomo_cache[token_name] = {
                                 "token_contract": token_contract,
                                 "total_sol_spent": sol_spent,
-                                "transactions":[{
+                                "transactions": [{
                                     "wallet": wallet,
                                     "sol_spent": sol_spent,
                                     "quantity": 0
@@ -81,6 +93,7 @@ async def check_solana_transactions(wallet):
     except Exception as e:
         print(f"check_solana_transactions error for wallet {wallet}: {e}")
 
+
 async def monitor_fomo():
     while True:
         try:
@@ -89,6 +102,7 @@ async def monitor_fomo():
             await asyncio.sleep(FOMO_INTERVAL)
         except Exception as e:
             print(f"monitor_fomo error: {e}")
+
 
 async def process_fomo_signals():
     try:
@@ -109,10 +123,11 @@ async def process_fomo_signals():
     except Exception as e:
         print(f"process_fomo_signals error: {e}")
 
+
 def extract_token_purchase(transaction):
     try:
         tx_json = json.loads(transaction.transaction.to_json())
-        meta = tx_json["meta"]
+        meta = tx_json.get("meta")
         if not meta:
             print("No meta data.")
             return None
@@ -130,6 +145,7 @@ def extract_token_purchase(transaction):
             program_id_index = instruction["programIdIndex"]
             program_id = message["accountKeys"][program_id_index]
 
+            # detect SPL Token transaction
             if program_id == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
                 token_account_index = instruction["accounts"][-1]
                 token_contract_index = instruction["accounts"][0]
@@ -143,6 +159,7 @@ def extract_token_purchase(transaction):
     except Exception as e:
         print(f"extract_token_purchase error: {e}")
         return None
+
 
 def get_token_name(token_contract):
     try:
@@ -163,6 +180,7 @@ def get_token_name(token_contract):
         print(f"get_token_name error: {e}")
         return "Unknown Token"
 
+
 def get_metadata_account(token_contract):
     try:
         TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"  # SPL Token Metadata Program ID
@@ -178,10 +196,12 @@ def get_metadata_account(token_contract):
         print(f"get_metadata_account error: {e}")
         return None
 
+
 async def main():
     print("Launch LedgerEyeBot...")
 
     await asyncio.gather(*[check_solana_transactions(wallet) for wallet in TARGET_WALLET], monitor_fomo())
+
 
 if __name__ == "__main__":
     asyncio.run(main())
