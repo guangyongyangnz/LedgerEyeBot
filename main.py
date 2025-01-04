@@ -1,3 +1,4 @@
+from dotenv import load_dotenv
 import os
 
 from solana.rpc.api import Client
@@ -8,6 +9,9 @@ import base64
 import asyncio
 import time
 from collections import defaultdict
+
+# load configuration
+load_dotenv()
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
