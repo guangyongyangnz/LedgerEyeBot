@@ -24,11 +24,12 @@ print(f"Solana RPC URL: {SOLANA_RPC_URL}")
 bot = Bot(token=TELEGRAM_TOKEN)
 solana_client = Client(SOLANA_RPC_URL)
 
-TARGET_WALLET = ["5ntZqUP1qF36hZc9sccq9ogKWmGyA9cp1YyPedZXsPdB"]
-THRESHOLD_AMOUNT = 0.01
+TARGET_WALLET = ["5ntZqUP1qF36hZc9sccq9ogKWmGyA9cp1YyPedZXsPdB", "5BiPQBP7P5F1JAarb4FDfUPBEXesfNVKYFKgTw3re9FB", "77D6ZCgfgpfNTT9hs8wapJiwU12eqgECBXFgarcbZpRY"]
+THRESHOLD_AMOUNT = 1
 # seconds
 FOMO_INTERVAL = 15 * 60
-start_time = int(time.time())
+# the latest signature
+latest_signatures = {wallet: None for wallet in TARGET_WALLET}
 
 fomo_cache = defaultdict(lambda: {
     "token_contract": "",
@@ -39,22 +40,22 @@ fomo_cache = defaultdict(lambda: {
 
 async def check_solana_transactions(wallet):
     try:
-        # Had deal with the processed signatures to prevent duplicate alarms
-        processed_transactions = set()
         wallet_pubkey = Pubkey.from_string(wallet)
+        global latest_signatures
 
         while True:
-            response = solana_client.get_signatures_for_address(wallet_pubkey, limit=5)
+            response = solana_client.get_signatures_for_address(wallet_pubkey, before=latest_signatures[wallet])
             transactions = response.value
             if not transactions:
                 print(f"No transactions found. wallet: {wallet}")
+                await asyncio.sleep(10)
                 return
+
+            latest_signatures[wallet] = transactions[0].signature
 
             for tx in transactions:
                 tx_signature = tx.signature
                 print(f"tx_signature: {tx_signature}")
-                if tx_signature in processed_transactions:
-                    continue
 
                 tx_details = solana_client.get_transaction(tx_signature,
                                                            max_supported_transaction_version=0)
@@ -62,38 +63,29 @@ async def check_solana_transactions(wallet):
                     continue
 
                 parsed_tx = tx_details.value
-                print(f"transaction detail: {parsed_tx}")
                 result = extract_token_purchase(parsed_tx)
-                print(f"Token purchase: {result}")
 
                 if result:
-                    try:
-                        token_name, token_contract, sol_spent, quantity = result
-                        if sol_spent >= THRESHOLD_AMOUNT:
-                            if token_name in fomo_cache:
-                                fomo_cache[token_name]["total_sol_spent"] += sol_spent
-                                fomo_cache[token_name]["transactions"].append({
-                                    "wallet": wallet,
-                                    "sol_spent": sol_spent,
-                                    "quantity": quantity
-                                })
-                            else:
-                                fomo_cache[token_name] = {
-                                    "token_contract": token_contract,
-                                    "total_sol_spent": sol_spent,
-                                    "transactions": [{
-                                        "wallet": wallet,
-                                        "sol_spent": sol_spent,
-                                        "quantity": quantity
-                                    }]
-                                }
-                            print(f"Added FOMO data for {token_name}: {sol_spent} SOL spent.")
+                    print(f"Token purchase: {result}")
+                    token_name, token_contract, sol_spent, quantity = result
+                    if token_name in fomo_cache:
+                        fomo_cache[token_name]["total_sol_spent"] += sol_spent
+                        fomo_cache[token_name]["transactions"].append({
+                            "wallet": wallet,
+                            "sol_spent": sol_spent,
+                            "quantity": quantity
+                        })
+                    else:
+                        fomo_cache[token_name] = {
+                            "token_contract": token_contract,
+                            "total_sol_spent": sol_spent,
+                            "transactions": [{
+                                "wallet": wallet,
+                                "sol_spent": sol_spent,
+                                "quantity": quantity
+                            }]
+                        }
 
-                    except ValueError as valueError:
-                        print(f"Error unpacking result from extract_token_purchase: {valueError}")
-                        continue
-
-                processed_transactions.add(tx_signature)
             await asyncio.sleep(10)
     except Exception as e:
         print(f"check_solana_transactions error for wallet {wallet}: {e}")
@@ -116,6 +108,7 @@ async def process_fomo_signals():
             total_sol_spent = data["total_sol_spent"]
             transactions = data["transactions"]
 
+            # message = "-------------------------------------\n\n"
             message = f"🔥 **[FOMO Single]** ${token_name} ({len(transactions)} Smart Wallet Purchase)\n\n"
             message += f"**Contract Address:** `{token_contract}`\n\n"
 
@@ -139,13 +132,11 @@ def extract_token_purchase(transaction):
         tx_json = json.loads(transaction.transaction.to_json())
         meta = tx_json.get("meta")
         if not meta:
-            print("extract_token_purchase: No meta data in transaction.")
             return None
 
         pre_token_balances = meta.get("preTokenBalances")
         post_token_balance = meta.get("postTokenBalances")
         if not pre_token_balances or not post_token_balance:
-            print("extract_token_purchase: Balance information missing in transaction")
             return None
 
         for pre_balance, post_balance in zip(pre_token_balances, post_token_balance):
@@ -154,14 +145,14 @@ def extract_token_purchase(transaction):
 
             pre_amount = int(pre_balance["uiTokenAmount"]["amount"])
             post_amount = int(post_balance["uiTokenAmount"]["amount"])
-            if post_amount > pre_amount:
-                token_contract = pre_balance["mint"]
+            token_contract = pre_balance["mint"]
+            sol_spent = (meta["preBalances"][0] - meta["postBalances"][0]) / 1_000_000_000
+            # Only focus on Buy transaction
+            if post_amount > pre_amount and sol_spent >= THRESHOLD_AMOUNT:
                 token_name = get_token_name(token_contract)
-                sol_spent = (meta["preBalances"][0] - meta["postBalances"][0]) / 1_000_000_000
                 quantity = (post_amount - pre_amount) / (10 ** post_balance["uiTokenAmount"]["decimals"])
                 return token_name, token_contract, sol_spent, quantity
 
-        print("No SPL Token purchase found in transaction.")
         return None
     except Exception as e:
         print(f"extract_token_purchase error: {e}")
@@ -174,7 +165,6 @@ def get_token_name(token_contract):
         response = solana_client.get_account_info(metadata_pubkey)
 
         if not response.value or not response.value.data:
-            print("get_token_name: No metadata found.")
             return "Unknown Token"
 
         account_data = base64.b64decode(response.value.data[0])
@@ -190,10 +180,8 @@ def get_token_name(token_contract):
 def get_metadata_account(token_contract):
     try:
         if token_contract == "So11111111111111111111111111111111111111112":
-            print("get_metadata_account: SOL Token detected, no metadata account needed.")
             return None
 
-        print(f"get_metadata_account, token_contract: {token_contract}")
         TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"  # SPL Token Metadata Program ID
         metadata_program_pubkey = Pubkey.from_string(TOKEN_METADATA_PROGRAM_ID)
         mint_pubkey = Pubkey.from_string(token_contract)
