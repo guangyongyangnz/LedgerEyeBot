@@ -41,8 +41,8 @@ async def check_solana_transactions(wallet):
     try:
         # Had deal with the processed signatures to prevent duplicate alarms
         processed_transactions = set()
-
         wallet_pubkey = Pubkey.from_string(wallet)
+
         while True:
             response = solana_client.get_signatures_for_address(wallet_pubkey, limit=5)
             transactions = response.value
@@ -75,7 +75,7 @@ async def check_solana_transactions(wallet):
                                 fomo_cache[token_name]["transactions"].append({
                                     "wallet": wallet,
                                     "sol_spent": sol_spent,
-                                    "quantity": 0
+                                    "quantity": quantity
                                 })
                             else:
                                 fomo_cache[token_name] = {
@@ -84,7 +84,7 @@ async def check_solana_transactions(wallet):
                                     "transactions": [{
                                         "wallet": wallet,
                                         "sol_spent": sol_spent,
-                                        "quantity": 0
+                                        "quantity": quantity
                                     }]
                                 }
                             print(f"Added FOMO data for {token_name}: {sol_spent} SOL spent.")
@@ -103,7 +103,7 @@ async def monitor_fomo():
     while True:
         try:
             if fomo_cache:
-                await  process_fomo_signals()
+                await process_fomo_signals()
             await asyncio.sleep(FOMO_INTERVAL)
         except Exception as e:
             print(f"monitor_fomo error: {e}")
@@ -116,14 +116,19 @@ async def process_fomo_signals():
             total_sol_spent = data["total_sol_spent"]
             transactions = data["transactions"]
 
-            message = f"[FOMO Single] ${token_name} ({len(transactions)} Smart Wallet Purchase)\n\n"
-            message += f"Contract Address: {token_contract}\n\n"
+            message = f"🔥 **[FOMO Single]** ${token_name} ({len(transactions)} Smart Wallet Purchase)\n\n"
+            message += f"**Contract Address:** `{token_contract}`\n\n"
 
             for tx in transactions:
-                message += f"🟢Wallet{tx['wallet']} Spent {tx['sol_spent']} SOL Purchase {tx['quantity']:.2f} {token_name}\n"
+                wallet = tx['wallet']
+                sol_spent = tx['sol_spent']
+                quantity = tx['quantity']
+                message += f"🟢 **Wallet:** `{wallet}`\n"
+                message += f"**Spent:** `{sol_spent:.9f}` SOL\n"
+                message += f"**Purchase:** `{quantity:.2f}` {token_name}\n\n"
 
-            message += f"\n Total Spent: {total_sol_spent:.2f} SOL\n"
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+            message += f"**Total Spent:** `{total_sol_spent:.2f}` SOL\n"
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode="Markdown")
         fomo_cache.clear()
     except Exception as e:
         print(f"process_fomo_signals error: {e}")
@@ -166,20 +171,16 @@ def extract_token_purchase(transaction):
 def get_token_name(token_contract):
     try:
         metadata_pubkey = get_metadata_account(token_contract)
-        if not metadata_pubkey:
+        response = solana_client.get_account_info(metadata_pubkey)
+
+        if not response.value or not response.value.data:
             print("get_token_name: No metadata found.")
             return "Unknown Token"
 
-        response = solana_client.get_account_info(metadata_pubkey)
-        account_info = response.value
-        if not account_info:
-            return "Unknown Token"
-
-        account_data = account_info.data
-        decoded_data = base64.b64decode(account_data[0])
+        account_data = base64.b64decode(response.value.data[0])
         name_start = 32
         name_length = 32
-        token_name = decoded_data[name_start: name_start + name_length].decode("utf-8").rstrip("\x00")
+        token_name = account_data[name_start: name_start + name_length].decode("utf-8").rstrip("\x00")
         return token_name
     except Exception as e:
         print(f"get_token_name error: {e}")
