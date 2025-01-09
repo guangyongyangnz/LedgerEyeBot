@@ -8,6 +8,7 @@ import base64
 import asyncio
 from collections import defaultdict
 from telegram.constants import ParseMode
+from web3 import Web3
 
 # Load environment variables
 load_dotenv()
@@ -15,15 +16,21 @@ load_dotenv()
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SOLANA_RPC_URL = os.environ.get("SOLANA_RPC_URL")
+ETHEREUM_RPC_URL = os.environ.get("ETHEREUM_RPC_URL")
+ETH_MONITOR_INTERVAL = os.environ.get("ETH_MONITOR_INTERVAL")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 solana_client = Client(SOLANA_RPC_URL)
+eth_client = Web3(Web3.HTTPProvider(ETHEREUM_RPC_URL))
 
 TARGET_WALLETS = [
     "5ntZqUP1qF36hZc9sccq9ogKWmGyA9cp1YyPedZXsPdB",
     "5BiPQBP7P5F1JAarb4FDfUPBEXesfNVKYFKgTw3re9FB",
     "77D6ZCgfgpfNTT9hs8wapJiwU12eqgECBXFgarcbZpRY"
 ]
+
+ETH_TARGET_WALLETS = ["", ""]
+
 THRESHOLD_AMOUNT = 1
 latest_signatures = {wallet: None for wallet in TARGET_WALLETS}
 
