@@ -9,6 +9,7 @@ import asyncio
 from collections import defaultdict
 from telegram.constants import ParseMode
 from web3 import Web3
+import web3
 
 # Load environment variables
 load_dotenv()
@@ -30,11 +31,53 @@ TARGET_WALLETS = [
 ]
 
 ETH_TARGET_WALLETS = ["", ""]
+ETH_THRESHOLD_AMOUNT = 1
 
 THRESHOLD_AMOUNT = 1
 latest_signatures = {wallet: None for wallet in TARGET_WALLETS}
 
 fomo_queue = asyncio.Queue()
+
+
+async def check_ethereum_transactions():
+    try:
+        latest_block = web3.eth.block_number
+        print(f"Starting Ethereum monitoring from block {latest_block}")
+
+        while True:
+            current_block = web3.eth.block_number
+            for block_number in range(latest_block + 1, current_block + 1):
+                block = web3.eth.get_block(block_number, full_transactions=True)
+                for tx in block.transactions:
+                    if tx.to and tx.to.lower() in [wallet.lower() for wallet in ETH_TARGET_WALLETS]:
+                        value_in_ether = web3.fromWei(tx.value, 'ether')
+                        if value_in_ether >= ETH_THRESHOLD_AMOUNT:
+                            await process_ethereum_transaction(tx, value_in_ether)
+
+                latest_block = block_number
+            await asyncio.sleep(ETH_THRESHOLD_AMOUNT)
+    except Exception as e:
+        print(f"check_ethereum_transactions error: {e}")
+
+
+async def process_ethereum_transaction(tx, value_in_ether):
+    try:
+        tx_hash = tx.hash.hex()
+        from_address = tx["from"]
+        to_address = tx.to
+
+        message = f"""
+                🔥 **[ETH Transaction Alert]**
+
+                **From:** `{from_address}`
+                **To:** `{to_address}`
+                **Value:** `{value_in_ether:.4f}` ETH
+                **Transaction Hash:** `{tx_hash}`
+                """
+        print(f"Sending Ethereum transaction alert: {message}")
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    except Exception as e:
+        print(f"process_ethereum_transaction error: {e}")
 
 async def check_solana_transactions(wallet):
     try:
@@ -214,6 +257,8 @@ async def main():
         asyncio.create_task(check_solana_transactions(wallet)) for wallet in TARGET_WALLETS
     ]
     tasks.append(asyncio.create_task(monitor_fomo()))
+    tasks.append(asyncio.create_task(check_ethereum_transactions()))
+
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
