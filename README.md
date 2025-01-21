@@ -13,3 +13,5 @@ Aggregate purchase records by token within a specific time frame and send alert 
 
 ### Phase 3
 Extend monitoring to the Ethereum blockchain.
+
+## Membership: $1000 USDT /year
