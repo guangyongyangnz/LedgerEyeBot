@@ -2,9 +2,11 @@ import Notifier
 import EthereumMonitor
 import SolanaMonitor
 import TaskManager
+import DexScreenerMonitor
 
 import os
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 
@@ -16,9 +18,9 @@ ETHEREUM_RPC_URL = os.getenv("ETHEREUM_RPC_URL")
 TARGET_ETH_WALLETS = ["0xYourEthWallet1", "0xYourEthWallet2"]
 TARGET_SOL_WALLETS = ["YourSolWallet1", "YourSolWallet2"]
 THRESHOLD_AMOUNT = 1
+DEX_CHECK_INTERVAL = 600
 
 notifier = Notifier(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
-
 task_manager = TaskManager()
 
 eth_monitor = EthereumMonitor(
@@ -37,7 +39,10 @@ sol_monitor = SolanaMonitor(
 )
 task_manager.add_task(sol_monitor.fetch_transactions())
 
+dex_monitor = DexScreenerMonitor(telegram_token=TELEGRAM_TOKEN, chat_id=TELEGRAM_CHAT_ID)
+task_manager.add_task(dex_monitor.monitor_trending(interval=DEX_CHECK_INTERVAL))
+
 # Run all tasks
 if __name__ == "__main__":
-    import asyncio
+    print("Starting Multi-Chain Monitor...")
     asyncio.run(task_manager.run_all())

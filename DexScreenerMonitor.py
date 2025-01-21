@@ -1,6 +1,5 @@
 import requests
 from telegram import Bot
-from telegram.constants import ParseMode
 import asyncio
 
 
