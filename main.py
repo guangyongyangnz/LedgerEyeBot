@@ -43,7 +43,7 @@ task_manager = TaskManager()
 # task_manager.add_task(sol_monitor.fetch_transactions())
 
 dex_monitor = DexScreenerMonitor(notifier)
-task_manager.add_task(dex_monitor.monitor_tokens())
+task_manager.add_task(dex_monitor.run())
 
 # Run all tasks
 if __name__ == "__main__":

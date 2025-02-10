@@ -1,61 +1,107 @@
 import asyncio
-import requests
-import time
+import aiohttp
+import os
+from dotenv import load_dotenv
+from utils.Notifier import Notifier
 
-DEXSCREENER_API_BASE_URL = "https://api.dexscreener.com"
-TOKEN_REFRESH_INTERVAL = 60
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+DEXSCREENER_API_BASE = "https://api.dexscreener.com"
+LATEST_TOKENS_ENDPOINT = "/token-profiles/latest/v1"
+BOOSTED_TOKENS_ENDPOINT = "/token-boosts/latest/v1"
+
 
 class DexScreenerMonitor:
-    def __init__(self, notifier):
+    def __init__(self, notifier: Notifier, interval=60):
         self.notifier = notifier
-        self.last_checked_time = time.time()
+        self.interval = interval
+        self.last_token_ids = set()  # To track newly detected tokens
+        self.last_boosted_ids = set()  # To track boosted tokens
 
-    async def fetch_latest_tokens(self):
-        url = f"{DEXSCREENER_API_BASE_URL}/token-profiles/latest/v1"
-        return self._fetch_tokens(url, "Latest Token Listings")
+    async def fetch_json(self, url):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    print(f"Error fetching {url}: {response.status}")
+                    return None
 
-    async def fetch_boosted_tokens(self):
-        url = f"{DEXSCREENER_API_BASE_URL}/token-boosts/latest/v1"
-        return self._fetch_tokens(url, "Boosted Trending Tokens")
+    async def get_latest_tokens(self):
+        """Fetch latest token profiles."""
+        url = DEXSCREENER_API_BASE + LATEST_TOKENS_ENDPOINT
+        data = await self.fetch_json(url)
+        if data is None:
+            print("Error fetching latest token profiles")
+            return []
 
-    def _fetch_tokens(self, url, category):
-        try:
-            response = requests.get(url)
-            if response.status_code != 200:
-                print(f"⚠️ [DexScreener] API Request Failed: {response.status_code}")
-                return None
+        return data  # Directly return the list of token profiles
 
-            data = response.json()
-            tokens = data.get("tokens", [])
-            return self._process_tokens(tokens, category)
+    async def get_boosted_tokens(self):
+        """Fetch latest boosted tokens."""
+        url = DEXSCREENER_API_BASE + BOOSTED_TOKENS_ENDPOINT
+        data = await self.fetch_json(url)
+        if data is None:
+            print("Error fetching latest boosted tokens")
+            return []
 
-        except requests.RequestException as e:
-            print(f"⚠️ [DexScreener] Request Failed: {e}")
-            return None
+        return data  # Directly return the list of boosted tokens
 
-    def _process_tokens(self, tokens, category):
+    async def process_latest_tokens(self):
+        """Monitor newly listed tokens."""
+        tokens = await self.get_latest_tokens()
         if not tokens:
-            print(f"📭 [DexScreener] No {category} data")
             return
 
-        message = f"🔥 **[{category}]**\n\n"
+        new_tokens = [token for token in tokens if token["tokenAddress"] not in self.last_token_ids]
+        if not new_tokens:
+            return
 
-        for token in tokens[:5]:
-            name = token.get("name", "Unknown")
-            symbol = token.get("symbol", "???")
-            price = token.get("priceUsd", "N/A")
-            liquidity = token.get("liquidity", "N/A")
-            url = f"https://dexscreener.com/{token.get('chainId', 'unknown')}/{token.get('address', '')}"
+        for token in new_tokens:
+            message = (
+                f"🚀 **New Token Listed**\n\n"
+                f"**Chain:** {token['chainId'].capitalize()}\n"
+                f"**Token Address:** `{token['tokenAddress']}`\n"
+                f"🔗 [View on DexScreener]({token['url']})\n"
+                f"📝 Description: {token.get('description', 'No description available')}\n"
+            )
+            await self.notifier.send_message(message)
 
-            message += f"💎 **{name}** ({symbol})\n"
-            message += f"💰 Price: `{price} USD`\n"
-            message += f"📊 Liquidity: `{liquidity} USD`\n"
-            message += f"[🔗 View on Dexscreener]({url})\n\n"
+        self.last_token_ids.update(token["tokenAddress"] for token in new_tokens)
 
-        asyncio.create_task(self.notifier.send_message(message))
+    async def process_boosted_tokens(self):
+        """Monitor boosted tokens with high momentum."""
+        tokens = await self.get_boosted_tokens()
+        if not tokens:
+            return
 
-    async def monitor_tokens(self):
+        boosted_tokens = [token for token in tokens if token["tokenAddress"] not in self.last_boosted_ids]
+        if not boosted_tokens:
+            return
+
+        for token in boosted_tokens:
+            message = (
+                f"📈 **Trending Token Alert**\n\n"
+                f"**Chain:** {token['chainId'].capitalize()}\n"
+                f"**Token Address:** `{token['tokenAddress']}`\n"
+                f"🔥 Boost Score: {token.get('amount', 'N/A')}\n"
+                f"🔗 [View on DexScreener]({token['url']})\n"
+                f"📝 Description: {token.get('description', 'No description available')}\n"
+            )
+            await self.notifier.send_message(message)
+
+        self.last_boosted_ids.update(token["tokenAddress"] for token in boosted_tokens)
+
+    async def run(self):
+        """Main monitoring loop."""
         while True:
-            await self.fetch_latest_tokens()
-            await self.fetch_boosted_tokens()
-            await asyncio.sleep(TOKEN_REFRESH_INTERVAL)
+            try:
+                await self.process_latest_tokens()
+                await self.process_boosted_tokens()
+            except Exception as e:
+                print(f"DexScreenerMonitor error: {e}")
+
+            await asyncio.sleep(self.interval)
