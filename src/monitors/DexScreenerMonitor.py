@@ -1,63 +1,61 @@
-import requests
-from telegram import Bot
 import asyncio
+import requests
+import time
 
+DEXSCREENER_API_BASE_URL = "https://api.dexscreener.com"
+TOKEN_REFRESH_INTERVAL = 60
 
 class DexScreenerMonitor:
-    def __init__(self, telegram_token, chat_id):
-        self.api_url = "https://api.dexscreener.io/latest/dex/pairs"
-        self.bot = Bot(token=telegram_token)
-        self.chat_id = chat_id
-        self.chains = ["ethereum", "solana"]
-        self.volume_threshold = 100000
-        self.price_change_threshold = 10
+    def __init__(self, notifier):
+        self.notifier = notifier
+        self.last_checked_time = time.time()
 
-    async def fetch_trending_pairs(self, chain):
+    async def fetch_latest_tokens(self):
+        url = f"{DEXSCREENER_API_BASE_URL}/token-profiles/latest/v1"
+        return self._fetch_tokens(url, "Latest Token Listings")
+
+    async def fetch_boosted_tokens(self):
+        url = f"{DEXSCREENER_API_BASE_URL}/token-boosts/latest/v1"
+        return self._fetch_tokens(url, "Boosted Trending Tokens")
+
+    def _fetch_tokens(self, url, category):
         try:
-            url = f"{self.api_url}/{chain}"
             response = requests.get(url)
-            response.raise_for_status()
+            if response.status_code != 200:
+                print(f"⚠️ [DexScreener] API Request Failed: {response.status_code}")
+                return None
+
             data = response.json()
+            tokens = data.get("tokens", [])
+            return self._process_tokens(tokens, category)
 
-            trending_pairs = []
-            for pair in data.get("pairs", []):
-                volume_usd = float(pair["volume"]["h24"])
-                price_change = float(pair["priceChange"]["h24"])
+        except requests.RequestException as e:
+            print(f"⚠️ [DexScreener] Request Failed: {e}")
+            return None
 
-                if volume_usd >= self.volume_threshold or abs(price_change) >= self.price_change_threshold:
-                    trending_pairs.append({
-                        "name": pair["pairName"],
-                        "price": pair["priceusd"],
-                        "volume_usd": volume_usd,
-                        "price_change": price_change,
-                        "link": pair["url"]
-                    })
-            return trending_pairs
-        except Exception as e:
-            print(f"Error fetching trending pairs for {chain}: {e}")
-            return []
+    def _process_tokens(self, tokens, category):
+        if not tokens:
+            print(f"📭 [DexScreener] No {category} data")
+            return
 
-    async def send_trending_alerts(self):
-        for chain in self.chains:
-            trending_pairs = await self.fetch_trending_pairs(chain)
+        message = f"🔥 **[{category}]**\n\n"
 
-            if trending_pairs:
-                message = f"🔥 **Trending on {chain.capitalize()}** 🔥\n\n"
-                for pair in trending_pairs:
-                    message += (
-                        f"🔗 **{pair['name']}**\n"
-                        f"💰 **Price:** ${float(pair['price']):.4f}\n"
-                        f"📈 **Volume (24h):** ${pair['volume_usd']:,}\n"
-                        f"📊 **Price Change (24h):** {pair['price_change']}%\n"
-                        f"[View Pair]({pair['link']})\n\n"
-                    )
+        for token in tokens[:5]:
+            name = token.get("name", "Unknown")
+            symbol = token.get("symbol", "???")
+            price = token.get("priceUsd", "N/A")
+            liquidity = token.get("liquidity", "N/A")
+            url = f"https://dexscreener.com/{token.get('chainId', 'unknown')}/{token.get('address', '')}"
 
-                try:
-                    await self.bot.send_message(chat_id=self.chat_id, text=message)
-                except Exception as e:
-                    print(f"Error sending alert for {chain}: {e}")
+            message += f"💎 **{name}** ({symbol})\n"
+            message += f"💰 Price: `{price} USD`\n"
+            message += f"📊 Liquidity: `{liquidity} USD`\n"
+            message += f"[🔗 View on Dexscreener]({url})\n\n"
 
-    async def monitor_trending(self, interval=600):
+        asyncio.create_task(self.notifier.send_message(message))
+
+    async def monitor_tokens(self):
         while True:
-            await self.send_trending_alerts()
-            await asyncio.sleep(interval)
+            await self.fetch_latest_tokens()
+            await self.fetch_boosted_tokens()
+            await asyncio.sleep(TOKEN_REFRESH_INTERVAL)
