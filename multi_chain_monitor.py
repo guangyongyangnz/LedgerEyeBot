@@ -1,12 +1,15 @@
-import Notifier
-import EthereumMonitor
-import SolanaMonitor
-import TaskManager
-import DexScreenerMonitor
+from utils.Notifier import Notifier
+from utils.TaskManager import TaskManager
+from monitors.EthereumMonitor import EthereumMonitor
+from monitors.SolanaMonitor import SolanaMonitor
+from monitors.DexScreenerMonitor import DexScreenerMonitor
 
 import os
+import sys
 from dotenv import load_dotenv
 import asyncio
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
 load_dotenv()
 

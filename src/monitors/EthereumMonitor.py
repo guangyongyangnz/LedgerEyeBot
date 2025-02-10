@@ -1,7 +1,7 @@
 import asyncio
 
 from web3 import Web3
-import BaseBlockchainMonitor
+from monitors.BaseBlockchainMonitor import BaseBlockchainMonitor
 
 
 class EthereumMonitor(BaseBlockchainMonitor):
