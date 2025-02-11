@@ -1,8 +1,8 @@
-from utils.Notifier import Notifier
-from utils.TaskManager import TaskManager
-from monitors.EthereumMonitor import EthereumMonitor
-from monitors.SolanaMonitor import SolanaMonitor
-from monitors.DexScreenerMonitor import DexScreenerMonitor
+from utils.notifier import Notifier
+from utils.task_manager import TaskManager
+from monitors.ethereum_monitor import EthereumMonitor
+from monitors.solana_monitor import SolanaMonitor
+from monitors.dexscreener_monitor import DexScreenerMonitor
 
 import os
 import sys

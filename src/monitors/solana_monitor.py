@@ -2,7 +2,7 @@ import asyncio
 
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey
-from monitors.BaseBlockchainMonitor import BaseBlockchainMonitor
+from monitors.base_blockchain_monitor import BaseBlockchainMonitor
 
 
 class SolanaMonitor(BaseBlockchainMonitor):

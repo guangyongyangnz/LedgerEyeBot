@@ -2,7 +2,8 @@ import asyncio
 import aiohttp
 import os
 from dotenv import load_dotenv
-from utils.Notifier import Notifier
+from utils.notifier import Notifier
+from utils.config import MAX_VALUES, WEIGHTS
 
 load_dotenv()
 
@@ -12,21 +13,30 @@ POOL_TOKENS_ENDPOINT = os.getenv("DEX_TOKEN_POOL_ENDPOINT")
 BOOSTED_TOKENS_THRESHOLD_SCORE = float(os.getenv("DEX_BOOSTED_TOKEN_THRESHOLD_SCORE", 10.0))
 
 
+def normalize(value, max_value):
+    return min(value / max_value, 1) * 100
+
+
 def calculate_potential_score(token_data):
     liquidity = token_data.get("liquidity", {}).get("usd", 0)
+    market_cap = token_data.get("marketCap", 0)
     volume = token_data.get("volume", {}).get("h24", 0)
     price_change = token_data.get("priceChange", {}).get("h24", 0)
     buys = token_data.get("txns", {}).get("h24", {}).get("buys", 0)
-    sells = token_data.get("txns", {}).get("h24", {}).get("sells", 0)
+    # sells = token_data.get("txns", {}).get("h24", {}).get("sells", 0)
 
-    score = (
-            (liquidity / 100000) +
-            (volume / 50000) +
-            (price_change / 10) +
-            ((buys - sells) / 50)
-    )
+    print(
+        f"liquidity: {liquidity}, volume: {volume}, price_change: {price_change}, buys: {buys}, market_cap: {market_cap}")
 
-    return score
+    volume_score = normalize(volume, MAX_VALUES["volume"]) * WEIGHTS["volume"]
+    price_change_score = normalize(price_change, MAX_VALUES["price_change"]) * WEIGHTS["price_change"]
+    buys_score = normalize(buys, MAX_VALUES["buys"]) * WEIGHTS["buys"]
+    liquidity_score = normalize(liquidity, MAX_VALUES["liquidity"]) * WEIGHTS["liquidity"]
+    market_cap_score = normalize(market_cap, MAX_VALUES["market_cap"]) * WEIGHTS["market_cap"]
+
+    total_score = volume_score + price_change_score + buys_score + liquidity_score + market_cap_score
+
+    return round(total_score, 2)
 
 
 async def fetch_json(url):
