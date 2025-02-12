@@ -133,6 +133,26 @@ class DexScreenerMonitor:
                 continue
 
             for token_data in token_details:
+                token_address = token_data.get("baseToken", {}).get('address', 'N/A')
+
+                # filter out fake token
+                if token_data["fdv"] > 50_000_000 and token_data["liquidity"]["usd"] < 50_000:
+                    logging.info(f"token_address: {token_address} maybe a fake token")
+                    continue
+
+                # filter out bot manipulate the market
+                volume_5m = token_data["volume"]["m5"]
+                volume_24h = token_data["volume"]["h24"]
+                txns_5m = token_data["txns"]["m5"]["buys"] + token_data["txns"]["m5"]["sells"]
+                if volume_5m > 0.5 * volume_24h and txns_5m < 10:
+                    logging.info(f"token_address: {token_address} maybe a bot manipulated token")
+                    continue
+
+                # filter out no social media account
+                if not token_data["info"]["socials"]:
+                    logging.info(f"token_address: {token_address} no social platform")
+                    continue
+
                 potential_score = calculate_potential_score(token_data)
 
                 if potential_score >= BOOSTED_TOKENS_THRESHOLD_SCORE:
