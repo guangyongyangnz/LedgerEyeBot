@@ -1,10 +1,12 @@
 import asyncio
 import aiohttp
 import os
+import logging
 from dotenv import load_dotenv
 from utils.notifier import Notifier
 from utils.config import MAX_VALUES, WEIGHTS
 
+logging.basicConfig(format="%(asctime)s - %(message)s", level=logging.INFO)
 load_dotenv()
 
 LATEST_TOKENS_ENDPOINT = os.getenv("DEX_LATEST_TOKENS_ENDPOINT")
@@ -25,8 +27,10 @@ def calculate_potential_score(token_data):
     buys = token_data.get("txns", {}).get("h24", {}).get("buys", 0)
     # sells = token_data.get("txns", {}).get("h24", {}).get("sells", 0)
 
-    print(
-        f"liquidity: {liquidity}, volume: {volume}, price_change: {price_change}, buys: {buys}, market_cap: {market_cap}")
+    base_token = token_data.get("baseToken", {})
+    token_address = base_token.get("address", "N/A")
+    logging.info(
+        f"token_address: {token_address}, liquidity: {liquidity}, volume: {volume}, price_change: {price_change}, buys: {buys}, market_cap: {market_cap}")
 
     volume_score = normalize(volume, MAX_VALUES["volume"]) * WEIGHTS["volume"]
     price_change_score = normalize(price_change, MAX_VALUES["price_change"]) * WEIGHTS["price_change"]
@@ -45,17 +49,17 @@ async def fetch_json(url):
             if response.status == 200:
                 return await response.json()
             else:
-                print(f"Error fetching {url}: {response.status}")
+                logging.info(f"Error fetching {url}: {response.status}")
                 return None
 
 
 async def get_latest_tokens():
     data = await fetch_json(LATEST_TOKENS_ENDPOINT)
     if data is None:
-        print("Error fetching latest token profiles")
+        logging.info("Error fetching latest token profiles")
         return []
 
-    print("Latest tokens fetched")
+    logging.info("Latest tokens fetched")
     return data
 
 
@@ -172,6 +176,6 @@ class DexScreenerMonitor:
                 # await self.process_latest_tokens()
                 await self.process_boosted_tokens()
             except Exception as e:
-                print(f"DexScreenerMonitor error: {e}")
+                logging.error(f"DexScreenerMonitor error: {e}")
 
             await asyncio.sleep(self.interval)
