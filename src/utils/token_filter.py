@@ -5,11 +5,11 @@ import time
 class TokenFilter:
     def __init__(self):
         self.min_liquidity = 10000
-        self.min_volume_24h = 10000
+        self.min_volume_h24 = 10000
         self.max_fdv_ratio = 50
         self.max_age_hours = 2
-        self.min_price_change_5m = 25
-        self.min_buys_24h = 20
+        self.min_price_change_m5 = 25
+        self.min_buys_h24 = 20
 
     def filter_token(self, token_data):
         try:
@@ -25,7 +25,7 @@ class TokenFilter:
             logging.info(f"liquidity: {liquidity}, volume_24h: {volume_h24}, price_change_m5: {price_change_m5},"
                          f" fdv: {fdv}, txns_5m: {txns_m5}, token_age: {token_age}, buys_24h: {buys_h24}, volume_5m: {volume_m5}")
             fdv_ratio = fdv / max(liquidity, 1)
-            if liquidity < self.min_liquidity or volume_h24 < self.min_volume_24h:
+            if liquidity < self.min_liquidity or volume_h24 < self.min_volume_h24:
                 logging.error("liquidity failed")
                 return False
 
@@ -33,7 +33,7 @@ class TokenFilter:
                 logging.error(f"fdv_ratio failed: {fdv_ratio}")
                 return False
 
-            if buys_h24 < self.min_buys_24h:
+            if buys_h24 < self.min_buys_h24:
                 logging.error("buys_24h failed")
                 return False
 
