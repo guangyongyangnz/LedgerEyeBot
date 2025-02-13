@@ -5,6 +5,7 @@ import logging
 from dotenv import load_dotenv
 from utils.notifier import Notifier
 from utils.config import MAX_VALUES, WEIGHTS
+from utils.token_filter import TokenFilter
 
 logging.basicConfig(format="%(asctime)s - %(message)s", level=logging.INFO)
 load_dotenv()
@@ -12,45 +13,54 @@ load_dotenv()
 LATEST_TOKENS_ENDPOINT = os.getenv("DEX_LATEST_TOKENS_ENDPOINT")
 BOOSTED_TOKENS_ENDPOINT = os.getenv("DEX_BOOSTED_TOKENS_ENDPOINT")
 POOL_TOKENS_ENDPOINT = os.getenv("DEX_TOKEN_POOL_ENDPOINT")
-BOOSTED_TOKENS_THRESHOLD_SCORE = float(os.getenv("DEX_BOOSTED_TOKEN_THRESHOLD_SCORE", 10.0))
+BOOSTED_TOKENS_THRESHOLD_SCORE = float(os.getenv("DEX_BOOSTED_TOKEN_THRESHOLD_SCORE", 75))
 
+token_filter = TokenFilter()
 
 def normalize(value, max_value):
     return min(value / max_value, 1) * 100
 
 
 def calculate_potential_score(token_data):
-    liquidity = token_data.get("liquidity", {}).get("usd", 0)
-    market_cap = token_data.get("marketCap", 0)
-    volume = token_data.get("volume", {}).get("h24", 0)
-    price_change = token_data.get("priceChange", {}).get("h24", 0)
-    buys = token_data.get("txns", {}).get("h24", {}).get("buys", 0)
-    # sells = token_data.get("txns", {}).get("h24", {}).get("sells", 0)
+    try:
+        liquidity = token_data.get("liquidity", {}).get("usd", 0)
+        fdv = token_data.get("fdv", 0) or 0
+        volume = token_data.get("volume", {}).get("h24", 0)
+        price_change = token_data.get("priceChange", {}).get("h24", 0)
+        buys = token_data.get("txns", {}).get("h24", {}).get("buys", 0)
+        # sells = token_data.get("txns", {}).get("h24", {}).get("sells", 0)
 
-    base_token = token_data.get("baseToken", {})
-    token_address = base_token.get("address", "N/A")
-    logging.info(
-        f"token_address: {token_address}, liquidity: {liquidity}, volume: {volume}, price_change: {price_change}, buys: {buys}, market_cap: {market_cap}")
+        base_token = token_data.get("baseToken", {})
+        token_address = base_token.get("address", "N/A")
+        logging.info(
+            f"token_address: {token_address}, liquidity: {liquidity}, volume: {volume}, price_change: {price_change}, buys: {buys}, fdv: {fdv}")
 
-    volume_score = normalize(volume, MAX_VALUES["volume"]) * WEIGHTS["volume"]
-    price_change_score = normalize(price_change, MAX_VALUES["price_change"]) * WEIGHTS["price_change"]
-    buys_score = normalize(buys, MAX_VALUES["buys"]) * WEIGHTS["buys"]
-    liquidity_score = normalize(liquidity, MAX_VALUES["liquidity"]) * WEIGHTS["liquidity"]
-    market_cap_score = normalize(market_cap, MAX_VALUES["market_cap"]) * WEIGHTS["market_cap"]
+        volume_score = normalize(volume, MAX_VALUES["volume"]) * WEIGHTS["volume"]
+        price_change_score = normalize(price_change, MAX_VALUES["price_change"]) * WEIGHTS["price_change"]
+        buys_score = normalize(buys, MAX_VALUES["buys"]) * WEIGHTS["buys"]
+        liquidity_score = normalize(liquidity, MAX_VALUES["liquidity"]) * WEIGHTS["liquidity"]
+        fdv_score = normalize(fdv, MAX_VALUES["fdv"]) * WEIGHTS["fdv"]
 
-    total_score = volume_score + price_change_score + buys_score + liquidity_score + market_cap_score
+        total_score = volume_score + price_change_score + buys_score + liquidity_score + fdv_score
 
-    return round(total_score, 2)
+        return round(total_score, 2)
+    except Exception as e:
+        logging.error(f"calculate_potential_score error: {e}")
+        return 0.00
 
 
 async def fetch_json(url):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                return await response.json()
-            else:
-                logging.info(f"Error fetching {url}: {response.status}")
-                return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    logging.info(f"Error fetching {url}: {response.status}")
+                    return None
+    except Exception as e:
+        logging.error(f"fetch_json error: {e}")
+        return None
 
 
 async def get_latest_tokens():
@@ -135,22 +145,8 @@ class DexScreenerMonitor:
             for token_data in token_details:
                 token_address = token_data.get("baseToken", {}).get('address', 'N/A')
 
-                # filter out fake token
-                if token_data["fdv"] > 50_000_000 and token_data["liquidity"]["usd"] < 50_000:
-                    logging.info(f"token_address: {token_address} maybe a fake token")
-                    continue
-
-                # filter out bot manipulate the market
-                volume_5m = token_data["volume"]["m5"]
-                volume_24h = token_data["volume"]["h24"]
-                txns_5m = token_data["txns"]["m5"]["buys"] + token_data["txns"]["m5"]["sells"]
-                if volume_5m > 0.5 * volume_24h and txns_5m < 10:
-                    logging.info(f"token_address: {token_address} maybe a bot manipulated token")
-                    continue
-
-                # filter out no social media account
-                if not token_data["info"]["socials"]:
-                    logging.info(f"token_address: {token_address} no social platform")
+                if not token_filter.filter_token(token_data):
+                    logging.info(f"Token {token_address} does not meet the filter criteria")
                     continue
 
                 potential_score = calculate_potential_score(token_data)
