@@ -13,9 +13,10 @@ load_dotenv()
 LATEST_TOKENS_ENDPOINT = os.getenv("DEX_LATEST_TOKENS_ENDPOINT")
 BOOSTED_TOKENS_ENDPOINT = os.getenv("DEX_BOOSTED_TOKENS_ENDPOINT")
 POOL_TOKENS_ENDPOINT = os.getenv("DEX_TOKEN_POOL_ENDPOINT")
-BOOSTED_TOKENS_THRESHOLD_SCORE = float(os.getenv("DEX_BOOSTED_TOKEN_THRESHOLD_SCORE", 75))
+BOOSTED_TOKENS_THRESHOLD_SCORE = float(os.getenv("DEX_BOOSTED_TOKEN_THRESHOLD_SCORE", 0))
 
 token_filter = TokenFilter()
+
 
 def normalize(value, max_value):
     return min(value / max_value, 1) * 100
@@ -82,15 +83,26 @@ async def get_boosted_tokens():
 
 
 async def fetch_pool_tokens(chain_id, token_address):
-    url = f"{POOL_TOKENS_ENDPOINT}/{chain_id}/{token_address}"
-    data = await fetch_json(url)
+    try:
+        url = f"{POOL_TOKENS_ENDPOINT}/{chain_id}/{token_address}"
+        data = await fetch_json(url)
 
-    if isinstance(data, list):
-        return data
-    elif isinstance(data, dict) and "pairs" in data:
-        return data["pairs"]
-    return []
+        if isinstance(data, list):
+            pool_data = data
+        elif isinstance(data, dict) and "pairs" in data:
+            pool_data = data["pairs"]
+        else:
+            return None
 
+        if not pool_data:
+            return None
+
+        # A token may have multiple trading pairs, select the highest liquidity pair to score the token
+        best_pool_data = max(pool_data, key=lambda x: x.get("liquidity", {}).get("usd", 0), default=None)
+        return best_pool_data
+    except Exception as e:
+        logging.error(f"Error fetching pool tokens: {e}")
+        return None
 
 class DexScreenerMonitor:
     def __init__(self, notifier: Notifier, interval=60):
@@ -123,38 +135,40 @@ class DexScreenerMonitor:
         self.last_token_ids.update(token["tokenAddress"] for token in new_tokens)
 
     async def process_boosted_tokens(self):
-        tokens = await get_boosted_tokens()
-        if not tokens:
-            return
+        try:
+            tokens = await get_boosted_tokens()
+            if not tokens:
+                return
 
-        boosted_tokens = [token for token in tokens if token.get("tokenAddress") not in self.last_boosted_ids]
-        if not boosted_tokens:
-            return
+            boosted_tokens = [token for token in tokens if token.get("tokenAddress") not in self.last_boosted_ids]
+            if not boosted_tokens:
+                return
 
-        for token in boosted_tokens:
-            chain_id = token.get("chainId")
-            token_address = token.get("tokenAddress")
+            for token in boosted_tokens:
+                chain_id = token.get("chainId")
+                token_address = token.get("tokenAddress")
 
-            if not chain_id or not token_address:
-                continue
+                if not chain_id or not token_address:
+                    continue
 
-            token_details = await fetch_pool_tokens(chain_id, token_address)
-            if not token_details:
-                continue
+                pool_token_detail = await fetch_pool_tokens(chain_id, token_address)
+                if not pool_token_detail:
+                    continue
 
-            for token_data in token_details:
-                token_address = token_data.get("baseToken", {}).get('address', 'N/A')
+                token_address = pool_token_detail.get("baseToken", {}).get('address', 'N/A')
 
-                if not token_filter.filter_token(token_data):
+                if not token_filter.filter_token(pool_token_detail):
                     logging.info(f"Token {token_address} does not meet the filter criteria")
                     continue
 
-                potential_score = calculate_potential_score(token_data)
+                potential_score = calculate_potential_score(pool_token_detail)
 
                 if potential_score >= BOOSTED_TOKENS_THRESHOLD_SCORE:
-                    await self.send_potential_token_alert(token_data, potential_score)
+                    await self.send_potential_token_alert(pool_token_detail, potential_score)
 
-        self.last_boosted_ids.update(token["tokenAddress"] for token in boosted_tokens)
+            self.last_boosted_ids.update(token["tokenAddress"] for token in boosted_tokens)
+        except Exception as e:
+            logging.error(f"Error processing boosted tokens: {e}")
 
     async def send_potential_token_alert(self, token_data, potential_score):
         base_token = token_data.get("baseToken", {})
