@@ -104,6 +104,7 @@ async def fetch_pool_tokens(chain_id, token_address):
         logging.error(f"Error fetching pool tokens: {e}")
         return None
 
+
 class DexScreenerMonitor:
     def __init__(self, notifier: Notifier, interval=60):
         self.notifier = notifier
