@@ -24,26 +24,36 @@ def normalize(value, max_value):
 
 def calculate_potential_score(token_data):
     try:
-        liquidity = token_data.get("liquidity", {}).get("usd", 0)
-        fdv = token_data.get("fdv", 0) or 0
         volume = token_data.get("volume", {}).get("h24", 0)
-        price_change = token_data.get("priceChange", {}).get("h24", 0)
-        buys = token_data.get("txns", {}).get("h24", {}).get("buys", 0)
+        price_change_m5 = token_data.get("priceChange", {}).get("m5", 0)
+        price_change_h1 = token_data.get("priceChange", {}).get("h1", 0)
+        txns_buys_m5 = token_data.get("txns", {}).get("m5", {}).get("buys", 0)
+        txns_buys_h1 = token_data.get("txns", {}).get("h1", {}).get("buys", 0)
+        txns_sells_m5 = token_data.get("txns", {}).get("m5", {}).get("sells", 0)
+        txns_m5 = txns_buys_m5 + txns_sells_m5
+
+        # fdv = token_data.get("fdv", 0) or 0
+        # liquidity = token_data.get("liquidity", {}).get("usd", 0)
         # sells = token_data.get("txns", {}).get("h24", {}).get("sells", 0)
 
         base_token = token_data.get("baseToken", {})
         token_address = base_token.get("address", "N/A")
         logging.info(
-            f"token_address: {token_address}, liquidity: {liquidity}, volume: {volume}, price_change: {price_change}, buys: {buys}, fdv: {fdv}")
+            f"token_address: {token_address}, volume: {volume}, price_change_m5: {price_change_m5}, price_change_h1: {price_change_h1}, buys_h24: {txns_buys_m5}, sells_h24: {txns_buys_h1}, txns_sells_m5: {txns_sells_m5}, txns_m5: {txns_m5}")
 
-        volume_score = normalize(volume, MAX_VALUES["volume"]) * WEIGHTS["volume"]
-        price_change_score = normalize(price_change, MAX_VALUES["price_change"]) * WEIGHTS["price_change"]
-        buys_score = normalize(buys, MAX_VALUES["buys"]) * WEIGHTS["buys"]
-        liquidity_score = normalize(liquidity, MAX_VALUES["liquidity"]) * WEIGHTS["liquidity"]
-        fdv_score = normalize(fdv, MAX_VALUES["fdv"]) * WEIGHTS["fdv"]
+        # FOMO emotions within 5 minutes
+        buys_ratio = txns_buys_m5 / max(txns_sells_m5, 1)
+        volume_score = normalize(volume, MAX_VALUES["volume_h24"]) * WEIGHTS["volume_h24"]
+        price_m5_score = normalize(price_change_m5, MAX_VALUES["price_change_m5"]) * WEIGHTS["price_change_m5"]
+        price_h1_score = normalize(price_change_h1, MAX_VALUES["price_change_h1"]) * WEIGHTS["price_change_h1"]
+        txns_buys_m5_score = normalize(txns_buys_m5, MAX_VALUES["txns_buys_m5"]) * WEIGHTS["txns_buys_m5"]
+        txns_buys_h1_score = normalize(txns_buys_h1, MAX_VALUES["txns_buys_h1"]) * WEIGHTS["txns_buys_h1"]
+        txns_sells_m5_score = normalize(txns_sells_m5, MAX_VALUES["txns_sells_m5"]) * WEIGHTS["txns_sells_m5"]
+        txns_score = normalize(txns_m5, MAX_VALUES["txns_m5"]) * WEIGHTS["txns_m5"]
 
-        total_score = volume_score + price_change_score + buys_score + liquidity_score + fdv_score
-
+        # extra bonus
+        buys_boost = 5 if buys_ratio > 2 else 0
+        total_score = volume_score + price_m5_score + price_h1_score + txns_buys_m5_score + txns_buys_h1_score + txns_sells_m5_score + txns_score + buys_boost
         return round(total_score, 2)
     except Exception as e:
         logging.error(f"calculate_potential_score error: {e}")
@@ -141,14 +151,9 @@ class DexScreenerMonitor:
             if not tokens:
                 return
 
-            boosted_tokens = [token for token in tokens if token.get("tokenAddress") not in self.last_boosted_ids]
-            if not boosted_tokens:
-                return
-
-            for token in boosted_tokens:
+            for token in tokens:
                 chain_id = token.get("chainId")
                 token_address = token.get("tokenAddress")
-
                 if not chain_id or not token_address:
                     continue
 
@@ -156,18 +161,14 @@ class DexScreenerMonitor:
                 if not pool_token_detail:
                     continue
 
-                token_address = pool_token_detail.get("baseToken", {}).get('address', 'N/A')
-
                 if not token_filter.filter_token(pool_token_detail):
                     logging.info(f"Token {token_address} does not meet the filter criteria")
                     continue
 
                 potential_score = calculate_potential_score(pool_token_detail)
-
+                logging.info(f"token_address: {token_address}, Potential score: {potential_score}")
                 if potential_score >= BOOSTED_TOKENS_THRESHOLD_SCORE:
                     await self.send_potential_token_alert(pool_token_detail, potential_score)
-
-            self.last_boosted_ids.update(token["tokenAddress"] for token in boosted_tokens)
         except Exception as e:
             logging.error(f"Error processing boosted tokens: {e}")
 
