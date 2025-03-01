@@ -1,6 +1,8 @@
 import logging
 import time
 
+from utils.chain_analytics import ChainAnalytics
+
 
 class TokenFilter:
     def __init__(self):
